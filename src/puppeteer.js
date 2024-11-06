@@ -6,16 +6,28 @@ const puppeteer = require("puppeteer");
 const apiUrl = `https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/`;
 const targetVolume = 100000; // 10w = 100,000
 
+let browser = null;
+async function initBrowser() {
+    if (!browser) {
+        browser = await puppeteer.launch({
+            headless: true, // 启动无头浏览器
+            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        });
+    }
+    return browser;
+}
+
 // 查询交易量
 async function getTradingVolume(token, fromTimestamp, toTimestamp) {
     const url = `${apiUrl}${token}?resolution=1m&from=${fromTimestamp}&to=${toTimestamp}`;
     try {
-        const browser = await puppeteer.launch();
-        const page = await browser.newPage();
+        const page = await (await initBrowser()).newPage();
         // Set a custom user agent to avoid bot detection
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         // Navigate to the API URL
         await page.goto(url, { waitUntil: 'domcontentloaded' });
+        // 等待一段时间再获取数据，以避免被检测为机器人
+        await page.waitForTimeout(Math.floor(Math.random() * 5000) + 1000);
 
         // Extract the API response
         const data = await page.evaluate(() => {
@@ -29,8 +41,8 @@ async function getTradingVolume(token, fromTimestamp, toTimestamp) {
         }
     } catch (error) {
         console.error('Error fetching data:', error);
-        return null;
     }
+    return null;
 }
 
 // 主查询函数，逐分钟检查交易量
@@ -44,7 +56,7 @@ async function trackVolume(token) {
         console.log(`Initial volume check: ${latestVolume}`);
         if (parseFloat(latestVolume) >= targetVolume) {
             console.log('Volume exceeded 100,000 on first check!');
-            return { success: true, volume: latestVolume };
+            return true;
         }
     }
 
@@ -58,10 +70,9 @@ async function trackVolume(token) {
         volumeData = await getTradingVolume(token, fromTimestamp, toTimestamp);
         if (volumeData) {
             const latestVolume = volumeData[volumeData.length - 1].volume;
-            console.log(`Volume at ${new Date().toISOString()}: ${latestVolume}`);
+            console.log(`Volume at ${new Date().toISOString()} : ${latestVolume}`);
             if (parseFloat(latestVolume) > targetVolume) {
-                console.log('Volume exceeded 100,000 during the tracking!');
-                return {success: true, volume: latestVolume};
+                return true;
             }
             totalVolume += parseFloat(latestVolume);
         }
@@ -69,21 +80,8 @@ async function trackVolume(token) {
 
     // 5分钟内的交易量总和
     console.log(`5 minutes are up. Total volume in 5 minutes: ${totalVolume}`);
-    if (totalVolume > targetVolume * 5) {
-        console.log('Total volume exceeded 100,000 within 5 minutes.');
-        return { success: true, volume: totalVolume };
-    } else {
-        console.log('Total volume did not exceed 100,000 within 5 minutes.');
-        return { success: false, volume: totalVolume };
-    }
+    return totalVolume > targetVolume * 5;
+
 }
 
-// 调用主函数
-const token = 'ETY2UMYhzWWFuS2y4PBLSddrhFdS9ZBmgKr5zJ7ipump';
-trackVolume(token).then(result => {
-    if (result.success) {
-        console.log(`Token volume check passed: ${result.volume}`);
-    } else {
-        console.log(`Token volume check failed: ${result.volume}`);
-    }
-});
+module.exports = { trackVolume };
