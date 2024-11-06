@@ -1,66 +1,89 @@
-const puppeteer = require('puppeteer');
+// https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/FVWpYkGcLuLfxmR7xZvmuPiBkQ193jvvmMpUmcfCpump?resolution=1m&from=1730891838&to=1730901798
 
-async function fetchTransactionValue(tokenAddress) {
-    const browser = await puppeteer.launch();
-    const page = await browser.newPage();
-    const url = `https://gmgn.ai/sol/token/${tokenAddress}`;
+const puppeteer = require("puppeteer");
 
-    await page.goto(url);
+// Base URL for the API
+const apiUrl = `https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/`;
+const targetVolume = 100000; // 10w = 100,000
 
-    // 等待页面加载，直到 1m tab 可点击
-    await page.waitForSelector('.css-k9g7wk');  // 1m tab 的选择器
-    const tab = await page.$('.css-k9g7wk'); // 获取 tab 元素
-    if (tab) {
-        console.log('点击 1m tab...');
-        await tab.click();  // 点击 1m tab
-    } else {
-        console.error('无法找到 1m tab，检查选择器是否正确');
+// 查询交易量
+async function getTradingVolume(token, fromTimestamp, toTimestamp) {
+    const url = `${apiUrl}${token}?resolution=1m&from=${fromTimestamp}&to=${toTimestamp}`;
+    try {
+        const browser = await puppeteer.launch();
+        const page = await browser.newPage();
+        // Set a custom user agent to avoid bot detection
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        // Navigate to the API URL
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+        // Extract the API response
+        const data = await page.evaluate(() => {
+            return window.fetch(window.location.href)
+                .then(res => res.json())
+                .then(json => json);
+        });
         await browser.close();
-        return;
+        if (data) {
+            return data.data;
+        }
+    } catch (error) {
+        console.error('Error fetching data:', error);
+        return null;
     }
-
-    // 等待页面更新，直到目标数据加载完成
-    await page.waitForSelector('.css-b5f2qn');  // 等待交易数据更新
-
-    // 获取目标 div 的交易值
-    const value = await page.evaluate(() => {
-        const transactionValueElement = document.querySelector('.css-b5f2qn');
-        return transactionValueElement ? transactionValueElement.textContent : null;
-    });
-
-    await browser.close();
-    return value ? value.trim() : null;
 }
 
-async function startScraping(tokenAddress) {
-    const values = [];
-    let totalValue = 0;
-
-    for (let i = 0; i < 6; i++) {
-        try {
-            const value = await fetchTransactionValue(tokenAddress);
-            console.log(`抓取第${i + 1}次交易变化值: ${value}`);
-            values.push(value);
-
-            if (i > 0) {
-                // 解析并计算交易值（如果需要转换）
-                const percentageChange = parseFloat(value.replace('%', '').trim());
-                totalValue += percentageChange;
-            }
-
-            if (i < 5) {
-                // 等待 1 分钟再抓取
-                console.log('等待 1 分钟...');
-                await new Promise(resolve => setTimeout(resolve, 60000)); // 等待 1 分钟
-            }
-        } catch (error) {
-            console.error(`抓取第${i + 1}次时出错:`, error);
+// 主查询函数，逐分钟检查交易量
+async function trackVolume(token) {
+    // 立即查询一次
+    const fromTimestamp = Math.floor(Date.now() / 1000) - 60; // 1m ago
+    let toTimestamp = Math.floor(Date.now() / 1000); // Now
+    let volumeData = await getTradingVolume(token, fromTimestamp, toTimestamp);
+    if (volumeData) {
+        const latestVolume = volumeData[volumeData.length - 1].volume;
+        console.log(`Initial volume check: ${latestVolume}`);
+        if (parseFloat(latestVolume) >= targetVolume) {
+            console.log('Volume exceeded 100,000 on first check!');
+            return { success: true, volume: latestVolume };
         }
     }
 
-    // 计算后 5 次的总交易变化值（如果是百分比）
-    console.log(`后 5 次抓取的总交易变化值: ${totalValue}%`);
+    let totalVolume = 0;
+    // 开始每分钟查询
+    for (let i = 0; i < 5; i++) {
+        console.log('Waiting for the next minute...');
+        await new Promise(resolve => setTimeout(resolve, 60000)); // 等待 1 分钟
+
+        toTimestamp = Math.floor(Date.now() / 1000);
+        volumeData = await getTradingVolume(token, fromTimestamp, toTimestamp);
+        if (volumeData) {
+            const latestVolume = volumeData[volumeData.length - 1].volume;
+            console.log(`Volume at ${new Date().toISOString()}: ${latestVolume}`);
+            if (parseFloat(latestVolume) > targetVolume) {
+                console.log('Volume exceeded 100,000 during the tracking!');
+                return {success: true, volume: latestVolume};
+            }
+            totalVolume += parseFloat(latestVolume);
+        }
+    }
+
+    // 5分钟内的交易量总和
+    console.log(`5 minutes are up. Total volume in 5 minutes: ${totalVolume}`);
+    if (totalVolume > targetVolume * 5) {
+        console.log('Total volume exceeded 100,000 within 5 minutes.');
+        return { success: true, volume: totalVolume };
+    } else {
+        console.log('Total volume did not exceed 100,000 within 5 minutes.');
+        return { success: false, volume: totalVolume };
+    }
 }
 
-const tokenAddress = 'A3MAr1D9CHwRFavqGAuaGKMVyP8YfkvByqjvKXRSpump';  // 替换为你需要抓取的 token 地址
-startScraping(tokenAddress);
+// 调用主函数
+const token = 'ETY2UMYhzWWFuS2y4PBLSddrhFdS9ZBmgKr5zJ7ipump';
+trackVolume(token).then(result => {
+    if (result.success) {
+        console.log(`Token volume check passed: ${result.volume}`);
+    } else {
+        console.log(`Token volume check failed: ${result.volume}`);
+    }
+});
