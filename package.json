@@ -1,0 +1,11 @@
+{
+  "name": "solpump",
+  "version": "1.0.0",
+  "dependencies": {
+    "@mtproto/core": "^6.3.0",
+    "axios": "^1.7.7",
+    "node-fetch": "2",
+    "puppeteer": "^23.7.0",
+    "telegram": "^2.26.6"
+  }
+}
