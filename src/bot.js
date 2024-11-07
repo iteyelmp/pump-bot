@@ -38,6 +38,8 @@ async function withSemaphore(fn) {
     }
 }
 
+let processedMessages = new Set();
+
 async function start() {
     try {
         // Login
@@ -67,6 +69,13 @@ async function start() {
         client.addEventHandler((event) => {
             if (event.message && event.message.peerId && event.message.peerId.channelId) {
                 const message = event.message.message;
+                const messageId = event.message.id;
+                if (processedMessages.has(messageId)) {
+                    return;  // 跳过重复消息
+                }
+
+                // 标记该消息为已处理
+                processedMessages.add(messageId);
                 const solanaRegex = /CA:\s*([A-Za-z0-9]+(?:[A-Za-z0-9]*[a-zA-Z]+[A-Za-z0-9]*)*)/;
                 const match = message.match(solanaRegex);
                 if (match && match[1])  {

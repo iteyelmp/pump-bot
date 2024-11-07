@@ -6,14 +6,17 @@ const puppeteer = require("puppeteer");
 const apiUrl = `https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/`;
 const targetVolume = 100000; // 10w = 100,000
 
+// 启动浏览器并进行配置
 let browser = null;
-async function initBrowser() {
-    if (!browser) {
-        browser = await puppeteer.launch({
-            headless: true, // 启动无头浏览器
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        });
+async function launchBrowser() {
+    if (browser) {
+        return browser;
     }
+
+    browser = await puppeteer.launch({
+        headless: true, // 启动无头浏览器
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    });
     return browser;
 }
 
@@ -21,21 +24,28 @@ async function initBrowser() {
 async function getTradingVolume(token, fromTimestamp, toTimestamp) {
     const url = `${apiUrl}${token}?resolution=1m&from=${fromTimestamp}&to=${toTimestamp}`;
     try {
-        const page = await (await initBrowser()).newPage();
-        // Set a custom user agent to avoid bot detection
+        const page = await (await launchBrowser()).newPage();
+        // 设置自定义的 User-Agent，避免被检测为机器人
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-        // Navigate to the API URL
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
-        // 等待一段时间再获取数据，以避免被检测为机器人
-        await page.waitForTimeout(Math.floor(Math.random() * 5000) + 1000);
+        // 优化性能，减少资源加载（不加载图片、CSS等）
+        await page.setRequestInterception(true);
+        page.on('request', (request) => {
+            if (['image', 'stylesheet', 'font'].includes(request.resourceType())) {
+                request.abort(); // 取消加载不必要的资源
+            } else {
+                request.continue();
+            }
+        });
 
+        // 打开 URL并等待页面加载完成
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
         // Extract the API response
         const data = await page.evaluate(() => {
             return window.fetch(window.location.href)
                 .then(res => res.json())
                 .then(json => json);
         });
-        await browser.close();
+        await page.close();
         if (data) {
             return data.data;
         }
