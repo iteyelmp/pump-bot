@@ -1,44 +1,29 @@
 // https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/FVWpYkGcLuLfxmR7xZvmuPiBkQ193jvvmMpUmcfCpump?resolution=1m&from=1730891838&to=1730901798
-
-const puppeteer = require("puppeteer");
+const { connect } = require('puppeteer-real-browser');
 
 // Base URL for the API
 const apiUrl = `https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/`;
 const targetVolume = 100000; // 10w = 100,000
 
-// 启动浏览器并进行配置
-let browser = null;
-async function launchBrowser() {
-    if (browser) {
-        return browser;
-    }
-
-    browser = await puppeteer.launch({
-        headless: true, // 启动无头浏览器
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-    });
-    return browser;
-}
 
 // 查询交易量
 async function getTradingVolume(token, fromTimestamp, toTimestamp) {
     const url = `${apiUrl}${token}?resolution=1m&from=${fromTimestamp}&to=${toTimestamp}`;
     try {
-        const page = await (await launchBrowser()).newPage();
+        const { page } = await connect({});
         // 设置自定义的 User-Agent，避免被检测为机器人
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-        // 优化性能，减少资源加载（不加载图片、CSS等）
-        await page.setRequestInterception(true);
+        // 如果是验证码请求或者需要跳过的请求，取消该请求
         page.on('request', (request) => {
-            if (['image', 'stylesheet', 'font'].includes(request.resourceType())) {
-                request.abort(); // 取消加载不必要的资源
+            if (request.url().includes('some-verification-url')) {
+                request.abort();
             } else {
                 request.continue();
             }
         });
 
         // 打开 URL并等待页面加载完成
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
         // Extract the API response
         const data = await page.evaluate(() => {
             return window.fetch(window.location.href)
