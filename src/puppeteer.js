@@ -3,8 +3,6 @@ const {connect} = require('puppeteer-real-browser');
 
 // Base URL for the API
 const apiUrl = `https://gmgn.ai/defi/quotation/v1/tokens/kline/sol/`;
-const targetVolume = 100000; // 10w = 100,000
-
 
 // 查询交易量
 async function getTradingVolume(token, fromTimestamp, toTimestamp) {
@@ -43,40 +41,51 @@ async function getTradingVolume(token, fromTimestamp, toTimestamp) {
 }
 
 // 主查询函数，逐分钟检查交易量
-async function trackVolume(token) {
-    const MAX_COUNT = 5;
-    const fromTimestamp = Math.floor(Date.now() / 1000) - 3600; // 1m ago
-    let count = 0;
-    let trackingStarted = false;
+async function trackVolume(token, targetVolume = 100000) {
+    return new Promise((resolve) => {
+        const MAX_COUNT = 5;
+        const fromTimestamp = Math.floor(Date.now() / 1000) - 3600; // 1h ago
 
-    // 开始每分钟查询
-    while (count < MAX_COUNT) {
-        console.log('等待一分钟...');
-        await new Promise(resolve => setTimeout(resolve, 60000));
+        let count = 0;
+        let failCount = 0;
+        let trackingStarted = false;
 
-        const toTimestamp = Math.floor(Date.now() / 1000);
-        const volumeData = await getTradingVolume(token, fromTimestamp, toTimestamp);
-        if (volumeData && volumeData.length > 0) {
-            // 取最新一分钟交易量数据
-            const latestVolume = volumeData[volumeData.length - 1].volume;
-            console.log(`${token} ：在第 ${count} 次, 时间：${new Date().toISOString()}， 交易量：${latestVolume}`);
-            // 过滤掉初始化或移除旧池子期间的零交易量
-            if (!trackingStarted) {
-                if (parseFloat(latestVolume) > 0) {
+        const intervalId = setInterval(async () => {
+            // 检查是否已达到最大计数
+            if (count >= MAX_COUNT) {
+                clearInterval(intervalId);
+                resolve({ success: false, data: [] });
+                return;
+            }
+
+            const toTimestamp = Math.floor(Date.now() / 1000);
+            const volumeData = await getTradingVolume(token, fromTimestamp, toTimestamp);
+            if (volumeData && volumeData.length > 0) {
+                // 取最新一分钟交易量数据
+                const latestVolume = volumeData[volumeData.length - 1].volume;
+                console.log(`${token} ：在第 ${count} 次, 时间：${new Date().toString()}， 交易量：${latestVolume}`);
+                // 检测非零交易量，标记为开始正式计数
+                if (!trackingStarted && parseFloat(latestVolume) > 0) {
                     trackingStarted = true;
-                } else {
-                    continue;
+                }
+
+                // 只有在监控开始后才计数并判断是否达到目标交易量
+                if (trackingStarted) {
+                    count++;
+                    if (parseFloat(latestVolume) > targetVolume) {
+                        clearInterval(intervalId);
+                        resolve({ success: true, data: volumeData });
+                    }
+                }
+            } else {
+                failCount++;
+                if (failCount > 10) {
+                    clearInterval(intervalId);
+                    resolve({ success: false, data: [] });
                 }
             }
-
-            // 检查交易量是否超过目标值
-            if (parseFloat(latestVolume) > targetVolume) {
-                return {success: true, data: volumeData};
-            }
-        }
-        count++;
-    }
-    return {success: false, data: []};
+        }, 60000); // 每分钟检查一次，不阻塞主线程
+    });
 }
 
 module.exports = {trackVolume};

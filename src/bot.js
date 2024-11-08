@@ -80,7 +80,7 @@ async function start() {
                 const match = message.match(solanaRegex);
                 if (match && match[1])  {
                     const token = match[1];
-                    console.log(`收到 token: ${token}`);
+                    console.log(`收到 token: ${token} , 时间：${new Date().toString()}`);
                     withSemaphore(async () => {
                         try {
                             const {success, data} = await trackVolume(token);
