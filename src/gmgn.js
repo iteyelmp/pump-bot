@@ -41,7 +41,7 @@ async function getTradingVolume() {
 }
 
 function formatTokensToRichText(tokens) {
-    let message = "<b>符合条件的 TOKENS:</b>\n\n";
+    let message = "<b>TOKENS 列表异动:</b>\n\n";
     tokens.forEach(token => {
         message += `<b>Token:</b> ${token.tokenSymbol}\n`;
         // 使用gmgn.ai格式化token地址为超链接
@@ -51,9 +51,11 @@ function formatTokensToRichText(tokens) {
     return message;
 }
 
+const sentTokens = new Map();
+// 设置多久后重新推送已发送的 token（比如 1 小时）
+const RESEND_INTERVAL = 8 * 60 * 60 * 1000; // 8 小时
 
-// 设置每分钟请求一次
-setInterval(async () => {
+async function queryAndSendData() {
     try {
         console.log("开始查询");
         const volumeData = await getTradingVolume();
@@ -75,10 +77,23 @@ setInterval(async () => {
                 };
             });
 
+            // 过滤掉已发送的 token
+            const newTokens = tokens.filter(token => {
+                const now = Date.now();
+                const lastSentTime = sentTokens.get(token.tokenAddress);
+                // 如果 token 还没发送过，或者已发送时间超过了重新发送的时间间隔
+                return !lastSentTime || (now - lastSentTime) > RESEND_INTERVAL;
+            });
+
             // 输出符合条件的tokens
-            if (tokens.length > 0) {
-                await sendMessage(formatTokensToRichText(tokens));
-                console.log('符合条件的token:', tokens);
+            if (newTokens.length > 0) {
+                // 将新推送的 token 地址加入 sentTokens，更新其时间戳
+                newTokens.forEach(token => {
+                    sentTokens.set(token.tokenAddress, Date.now()); // 更新发送时间戳
+                });
+
+                await sendMessage(formatTokensToRichText(newTokens));
+                console.log('符合条件的token:', newTokens);
             } else {
                 console.log('没有符合条件的token');
             }
@@ -86,4 +101,9 @@ setInterval(async () => {
     } catch (error) {
         console.error('请求API失败:', error);
     }
-}, 60000); // 每60秒请求一次
+}
+
+// 设置每分钟请求一次
+setInterval(queryAndSendData, 60000); // 每60秒请求一次
+// 启动时立即查询一次
+queryAndSendData();
