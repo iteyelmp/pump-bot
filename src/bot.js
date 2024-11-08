@@ -83,9 +83,9 @@ async function start() {
                     console.log(`收到 token: ${token}`);
                     withSemaphore(async () => {
                         try {
-                            const status = await trackVolume(token);
-                            if (status) {
-                                await sendMessage(message)
+                            const {success, data} = await trackVolume(token);
+                            if (success) {
+                                await sendMessage(token)
                             }
                         } catch (e) {
                             console.error(`处理 token ${token} 时发生错误:`, e.message);
