@@ -3,8 +3,6 @@ const API = "https://gmgn.ai/defi/quotation/v1/pairs/sol/new_pairs/1m?limit=500&
 const {connect} = require('puppeteer-real-browser');
 const { sendMessage } = require('./send');
 
-const targetVolume = 100000;
-
 // 查询交易量
 async function getTradingVolume() {
     try {
@@ -62,20 +60,30 @@ async function queryAndSendData() {
         if (volumeData.pairs && volumeData.pairs.length > 0) {
             const pairs = volumeData.pairs;
 
-            // 筛选出volume大于10w的token
-            const filteredTokens = pairs.filter(pair => {
-                const volume = parseFloat(pair.base_token_info.volume);
-                return volume > targetVolume; // 只保留volume大于100000的token
-            });
-
             // 提取符合条件的tokens
-            const tokens = filteredTokens.map(pair => {
-                return {
-                    tokenSymbol: pair.base_token_info.symbol,
-                    tokenAddress: pair.base_token_info.address,
-                    volume: pair.base_token_info.volume
-                };
-            });
+            const tokens = pairs.map(pair => {
+                const tokenInfo = pair.base_token_info;
+                const marketCap = parseFloat(tokenInfo.market_cap);
+                const volume = parseFloat(tokenInfo.volume);
+
+                // 判断市值并设置交易量阈值
+                let targetVolume = 0;
+                if (marketCap < 1000000) {  // 市值低于100万
+                    targetVolume = 100000;  // 1分钟交易量大于10w
+                } else {  // 市值高于100万
+                    targetVolume = 150000;  // 1分钟交易量大于15w
+                }
+
+                // 如果交易量大于阈值，返回token信息
+                if (volume > targetVolume) {
+                    return {
+                        tokenSymbol: tokenInfo.symbol,
+                        tokenAddress: tokenInfo.address,
+                        volume: tokenInfo.volume
+                    };
+                }
+                return null;
+            }).filter(token => token !== null); // 移除未符合条件的tokens
 
             // 过滤掉已发送的 token
             const newTokens = tokens.filter(token => {
@@ -91,6 +99,11 @@ async function queryAndSendData() {
                 newTokens.forEach(token => {
                     sentTokens.set(token.tokenAddress, Date.now()); // 更新发送时间戳
                 });
+                while (sentTokens.size > 500) {
+                    // 清除最早的 token，直到 size 小于等于 MAX_TOKENS
+                    const earliestToken = sentTokens.keys().next().value;
+                    sentTokens.delete(earliestToken);
+                }
 
                 await sendMessage(formatTokensToRichText(newTokens));
                 console.log('符合条件的token:', newTokens);
