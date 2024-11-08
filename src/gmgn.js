@@ -41,9 +41,9 @@ async function getTradingVolume() {
 function formatTokensToRichText(tokens) {
     let message = "<b>TOKENS 列表异动:</b>\n\n";
     tokens.forEach(token => {
-        message += `<b>Token:</b> ${token.tokenSymbol}\n`;
-        // 使用gmgn.ai格式化token地址为超链接
-        message += `<b>地址:</b> <a href="https://gmgn.ai/sol/token/${token.tokenAddress}">${token.tokenAddress}</a>\n`;
+        message += `<b>Token:</b> <a href="https://gmgn.ai/sol/token/${token.tokenAddress}">${token.tokenSymbol}</a>\n`;
+        // 使用代码块格式化token地址，便于用户复制
+        message += `<b>地址:</b> \`${token.tokenAddress}\`\n`;
         message += `<b>交易量:</b> ${token.volume}\n\n`;
     });
     return message;
