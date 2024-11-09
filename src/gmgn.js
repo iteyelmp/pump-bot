@@ -74,7 +74,7 @@ function formatMultiMessage(token, timeInterval, marketCapChange, previousMarket
         `<b>Token:</b> <a href="https://gmgn.ai/sol/token/${token.tokenAddress}">${token.tokenSymbol}</a>\n` +
         `<b>地址:</b> <code>${token.tokenAddress}</code>\n` +
         `<b>通知次数:</b> ${notificationCount} 次\n` +
-        `<b>交易量:</b> ${token.volume}\n`
+        `<b>交易量:</b> ${token.volume}\n` +
         `<b>市值:</b> ${token.marketCap}\n\n` +
         `<b>前次市值:</b> ${previousMarketCap}\n` +
         `<b>市值变化:</b> ${marketCapChange}\n` +
