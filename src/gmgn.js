@@ -1,7 +1,29 @@
 const API = "https://gmgn.ai/defi/quotation/v1/pairs/sol/new_pairs/1m?limit=500&orderby=open_timestamp&direction=desc&launchpad=pump&period=1h&filters[]=not_honeypot&filters[]=pump";
 
 const {connect} = require('puppeteer-real-browser');
+const sqlite3 = require('sqlite3').verbose();
+const { promisify } = require('util');
+
 const { sendMessage } = require('./send');
+
+const db = new sqlite3.Database('tokens.db');
+db.getAsync = promisify(db.get);
+db.runAsync = promisify(db.run);
+
+async function initDatabase() {
+    try {
+        await db.runAsync(`CREATE TABLE IF NOT EXISTS tokens (
+            tokenAddress TEXT PRIMARY KEY,
+            tokenSymbol TEXT,
+            count INTEGER DEFAULT 1,
+            lastSentTime INTEGER,
+            marketCap REAL
+        )`);
+        console.log('数据库表结构已初始化');
+    } catch (error) {
+        console.error('数据库初始化失败:', error);
+    }
+}
 
 // 查询交易量
 async function getTradingVolume() {
@@ -38,20 +60,26 @@ async function getTradingVolume() {
     return null;
 }
 
-function formatTokensToRichText(tokens) {
-    let message = "<b>TOKENS 列表异动:</b>\n\n";
-    tokens.forEach(token => {
-        message += `<b>Token:</b> <a href="https://gmgn.ai/sol/token/${token.tokenAddress}">${token.tokenSymbol}</a>\n`;
-        // 使用代码块格式化token地址，便于用户复制
-        message += `<b>地址:</b> <code>${token.tokenAddress}</code>\n`;
-        message += `<b>交易量:</b> ${token.volume}\n\n`;
-    });
-    return message;
+function formatFirstMessage(token) {
+    return `<b>首次通知</b>\n\n` +
+        `<b>Token:</b> <a href="https://gmgn.ai/sol/token/${token.tokenAddress}">${token.tokenSymbol}</a>\n` +
+        `<b>地址:</b> <code>${token.tokenAddress}</code>\n` +
+        `<b>交易量:</b> ${token.volume}\n` +
+        `<b>市值:</b> ${token.marketCap}\n\n`;
 }
 
-const sentTokens = new Map();
-// 设置多久后重新推送已发送的 token（比如 1 小时）
-const RESEND_INTERVAL = 8 * 60 * 60 * 1000; // 8 小时
+function formatMultiMessage(token, timeInterval, marketCapChange, previousMarketCap, notificationCount) {
+    const intervalInMinutes = (timeInterval / 1000 / 60).toFixed(1);
+    return `<b>多次通知</b>\n\n` +
+        `<b>Token:</b> <a href="https://gmgn.ai/sol/token/${token.tokenAddress}">${token.tokenSymbol}</a>\n` +
+        `<b>地址:</b> <code>${token.tokenAddress}</code>\n` +
+        `<b>通知次数:</b> ${notificationCount} 次\n` +
+        `<b>交易量:</b> ${token.volume}\n`
+        `<b>市值:</b> ${token.marketCap}\n\n` +
+        `<b>前次市值:</b> ${previousMarketCap}\n` +
+        `<b>市值变化:</b> ${marketCapChange}\n` +
+        `<b>时间间隔:</b> ${intervalInMinutes} 分钟\n\n`;
+}
 
 async function queryAndSendData() {
     try {
@@ -67,48 +95,56 @@ async function queryAndSendData() {
                 const volume = parseFloat(tokenInfo.volume);
 
                 // 判断市值并设置交易量阈值
-                let targetVolume = 0;
-                if (marketCap < 1000000) {  // 市值低于100万
-                    targetVolume = 100000;  // 1分钟交易量大于10w
-                } else {  // 市值高于100万
-                    targetVolume = 150000;  // 1分钟交易量大于15w
-                }
-
-                // 如果交易量大于阈值，返回token信息
+                const targetVolume = marketCap < 1000000 ? 100000 : 150000;
                 if (volume > targetVolume) {
                     return {
                         tokenSymbol: tokenInfo.symbol,
                         tokenAddress: tokenInfo.address,
-                        volume: tokenInfo.volume
+                        volume: tokenInfo.volume,
+                        marketCap: tokenInfo.market_cap
                     };
                 }
                 return null;
             }).filter(token => token !== null); // 移除未符合条件的tokens
 
             // 过滤掉已发送的 token
-            const newTokens = tokens.filter(token => {
+            for (const token of tokens) {
                 const now = Date.now();
-                const lastSentTime = sentTokens.get(token.tokenAddress);
-                // 如果 token 还没发送过，或者已发送时间超过了重新发送的时间间隔
-                return !lastSentTime || (now - lastSentTime) > RESEND_INTERVAL;
-            });
+                const result = await db.getAsync(
+                    'SELECT * FROM tokens WHERE tokenAddress = ?',
+                    [token.tokenAddress]
+                );
 
-            // 输出符合条件的tokens
-            if (newTokens.length > 0) {
-                // 将新推送的 token 地址加入 sentTokens，更新其时间戳
-                newTokens.forEach(token => {
-                    sentTokens.set(token.tokenAddress, Date.now()); // 更新发送时间戳
-                });
-                while (sentTokens.size > 500) {
-                    // 清除最早的 token，直到 size 小于等于 MAX_TOKENS
-                    const earliestToken = sentTokens.keys().next().value;
-                    sentTokens.delete(earliestToken);
+                if (result) {
+                    // 如果是多次发送，计算时间间隔和市值变化
+                    const timeInterval = now - result.lastSentTime;
+                    const marketCapChange = parseFloat(token.marketCap) - result.marketCap;
+
+                    // 更新数据库：count 自增, lastSentTime 更新为当前时间, 市值更新
+                    await db.runAsync(
+                        `UPDATE tokens SET 
+                            count = count + 1, 
+                            lastSentTime = ?, 
+                            marketCap = ?
+                         WHERE tokenAddress = ?`,
+                        [now, token.marketCap, token.tokenAddress]
+                    );
+
+                    // 发送多次通知
+                    const message = formatMultiMessage(token, timeInterval, marketCapChange, result.marketCap, result.count + 1);
+                    await sendMessage(message);
+                } else {
+                    // 首次发送，插入新记录
+                    await db.runAsync(
+                        `INSERT INTO tokens (tokenAddress, tokenSymbol, count, lastSentTime, marketCap) 
+                         VALUES (?, ?, ?, ?, ?)`,
+                        [token.tokenAddress, token.tokenSymbol, 1, now, token.marketCap]
+                    );
+
+                    // 发送首次通知
+                    const message = formatFirstMessage(token);
+                    await sendMessage(message);
                 }
-
-                await sendMessage(formatTokensToRichText(newTokens));
-                console.log('符合条件的token:', newTokens);
-            } else {
-                console.log('没有符合条件的token');
             }
         }
     } catch (error) {
@@ -116,7 +152,12 @@ async function queryAndSendData() {
     }
 }
 
-// 设置每分钟请求一次
-setInterval(queryAndSendData, 60000); // 每60秒请求一次
-// 启动时立即查询一次
-queryAndSendData();
+
+// 启动时初始化数据库表结构并立即开始查询
+async function main() {
+    await initDatabase();
+    queryAndSendData(); // 启动时立即查询
+    setInterval(queryAndSendData, 60000); // 每分钟查询一次
+}
+
+main();
